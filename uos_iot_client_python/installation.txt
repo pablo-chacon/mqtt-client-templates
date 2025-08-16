@@ -1,0 +1,16 @@
+# Requirements
+pip install paho-mqtt
+
+
+# env example:
+export MQTT_BROKER=mqtt-broker           # or your FQDN/IP
+export MQTT_PORT=1883
+# optional auth if your broker requires it
+# export MQTT_USERNAME=...
+# export MQTT_PASSWORD=...
+
+export UOS_CLIENT_ID="usr-12345"         # opaque; your platform maps user->client_id
+# optional: fix session_id if you want one per app boot rather than auto-rotate
+# export UOS_SESSION_ID="3c9c0b7a-...."
+
+
