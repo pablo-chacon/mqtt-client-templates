@@ -1,0 +1,46 @@
+openapi: 3.0.3
+info: { title: UrbanOS API, version: "1.0" }
+paths:
+  /api/view_routes_live/{client_id}:
+    get:
+      summary: Latest live route for a client
+      parameters:
+        - in: path
+          name: client_id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LiveRoute'
+        "404": { description: No live route }
+  /api/view_routes_live:
+    get:
+      summary: Latest live route (client_id from auth)
+      responses:
+        "200": { $ref: '#/components/responses/OkLiveRoute' }
+components:
+  responses:
+    OkLiveRoute:
+      description: OK
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/LiveRoute' }
+  schemas:
+    LiveRoute:
+      type: object
+      properties:
+        client_id: { type: string }
+        stop_id: { type: string, nullable: true }
+        origin_lat: { type: number } 
+        origin_lon: { type: number }
+        destination_lat: { type: number }
+        destination_lon: { type: number }
+        path_geojson:
+          type: object
+          description: GeoJSON LineString
+        segment_type: { type: string }
+        created_at: { type: string, format: date-time }
