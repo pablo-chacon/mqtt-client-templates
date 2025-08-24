@@ -4,17 +4,13 @@
 # mqtt-client-templates
 
 UrbanOS MQTT client templates in Go, JavaScript, and Python.
-Use these templates to publish geodata to UrbanOS, then fetch the current route from `uos_api`.
+Use these templates to publish geodata to UrbanOS, then let your own backend decide what to expose and how to filter.
 
-**UrbanOS repo:** [https://github.com/pablo-chacon/UrbanOS-POC](https://github.com/pablo-chacon/UrbanOS-POC)
+**UrbanOS PoC**, [https://github.com/pablo-chacon/UrbanOS-POC](https://github.com/pablo-chacon/UrbanOS-POC)
 
-## What this repo gives you
+## Why this exists
 
-1. A stable client contract for MQTT and HTTP.
-2. Ready to run templates for Go, Node.js, and Python.
-3. A Termux quick start so any Android phone can be a client.
-4. Minimal API docs to request the live route.
-5. A short TODO list for community apps.
+UrbanOS is sovereign, self healing, modular, and client scoped. It produces high quality routing outputs. The deployer owns how that data is exposed to apps and dashboards, the deployer decides what to publish and how to filter.
 
 ## Client interface
 
@@ -37,37 +33,66 @@ client/{client_id}/session/{session_id}/
 }
 ```
 
-QoS is 1, retain is false, timestamps are UTC ISO8601.
-TLS on 8883 is recommended, mutual TLS is optional.
+QoS is 1, retain is false, timestamps are UTC ISO8601, TLS on 8883 is recommended, mutual TLS is optional.
 
-**HTTP route fetch**
+## Reference API outputs
 
-* `GET /api/view_routes_live/{client_id}` returns the latest chosen route for that client.
-* Optional, `GET /api/view_routes_live` can derive `client_id` from auth if your deployment adds JWT.
+UrbanOS ships API endpoints that return unified routing data for all clients. This is intentional. The deployer filters in their own backend.
 
-Response shape, simplified for front ends:
+Base URL, `http://<uos_api_host>:8181`.
 
-```json
-{
-  "client_id": "usr-12345",
-  "stop_id": "direct",
-  "origin_lat": 59.3015,
-  "origin_lon": 17.9901,
-  "destination_lat": 59.28708,
-  "destination_lon": 17.98336,
-  "path_geojson": { "type": "LineString", "coordinates": [[18.0,59.30],[17.98,59.29]] },
-  "segment_type": "fallback",
-  "created_at": "2025-08-23T18:54:30Z"
-}
+* `GET /api/view_routes_unified_latest`, the latest record per client and per destination across optimized routes and reroutes.
+* `GET /api/view_routes_live`, one chosen route per client, the most recent decision.
+* `GET /api/view_routes_unified`, a unified snapshot of optimized routes and reroutes, latest per client and destination.
+
+These endpoints reflect database views that UrbanOS maintains. They are stable entry points for downstream systems. You can filter by `client_id` and shape to GeoJSON in your own backend.
+
+## How deployers filter and shape data
+
+UrbanOS does not impose per client filtering at the API layer. Deployer backends apply policy and filtering. This keeps control with the owner of the deployment.
+
+### Option A, thin proxy that filters by client id
+
+Example in Flask. Fetch once, filter before responding.
+
+```python
+from flask import Flask, request, jsonify
+import requests
+
+app = Flask(__name__)
+UOS_API = "http://uos-api:8181"
+
+@app.get("/myapp/live_route")
+def my_live_route():
+    client_id = request.args.get("client_id")
+    data = requests.get(f"{UOS_API}/api/view_routes_live", timeout=5).json()
+    rows = [r for r in data if not client_id or r["client_id"] == client_id]
+    return jsonify(rows)
 ```
 
-An OpenAPI stub lives in `docs/uos_api/openapi.yaml`.
-The full UrbanOS API and database flow are in the UrbanOS repo.
+### Option B, query the database view directly and shape to GeoJSON
 
-## Quick start on Android with Termux
+If your backend connects to the UrbanOS database, select from the shipping views and convert the geometry to GeoJSON for map front ends.
 
-1. Install Termux from F-Droid.
-2. In Termux, run:
+```sql
+SELECT
+  client_id,
+  stop_id,
+  origin_lat, origin_lon,
+  destination_lat, destination_lon,
+  ST_AsGeoJSON(path)::json AS path_geojson,
+  segment_type,
+  created_at
+FROM view_routes_live;
+```
+
+### Security and policy
+
+Place the UrbanOS API behind your gateway, enforce authentication, derive client identity in your backend, return only what is allowed for that caller, keep UrbanOS focused on intelligence and data production.
+
+## Termux quick start
+
+Install Termux from F-Droid. In Termux, run:
 
 ```bash
 pkg update -y && pkg upgrade -y
@@ -76,7 +101,7 @@ python -m pip install --upgrade pip
 pip install paho-mqtt
 ```
 
-3. Create env and load it:
+Environment and a quick publish test:
 
 ```bash
 cat > ~/.uos.env <<'EOF'
@@ -90,31 +115,18 @@ export UOS_CLIENT_ID=usr-12345
 EOF
 echo '. ~/.uos.env' >> ~/.bashrc
 source ~/.uos.env
-```
 
-4. Sanity test publish:
-
-```bash
 mosquitto_pub -h $MQTT_BROKER -p $MQTT_PORT \
   -t client/$UOS_CLIENT_ID/session/test/ -q 1 \
   -m '{"lat":59.3293,"lon":18.0686,"timestamp":"2025-08-23T17:00:00Z"}'
 ```
-
-5. Fetch live route:
-
-```bash
-curl http://<uos_api_host>:8181/api/view_routes_live/$UOS_CLIENT_ID
-```
-
-A fuller Termux guide is in `docs/termux.md`.
 
 ## Templates
 
 ### Python
 
 Folder `uos_iot_client_python`.
-Install `paho-mqtt`, run `uos_iot_client.py`, set env as in the Termux section.
-TLS can be enabled with `MQTT_TLS=1` and `MQTT_CAFILE=/path/to/ca.crt`.
+Install `paho-mqtt`. Run `uos_iot_client.py`. Set environment as above. TLS can be enabled with `MQTT_TLS=1` and `MQTT_CAFILE`.
 
 ### Node.js
 
@@ -126,7 +138,7 @@ npm i
 node uos_iot_client.js
 ```
 
-Env variables mirror the Python template, the code uses the `mqtt` package and the same topic and payload.
+Environment variables mirror the Python template. The code uses the `mqtt` package and the same topic and payload.
 
 ### Go
 
@@ -138,14 +150,139 @@ go mod tidy
 go run .
 ```
 
-The client uses `eclipse/paho.mqtt.golang`, env variables are read at start, TLS can be set by pointing to a CA file.
+The client uses `eclipse/paho.mqtt.golang`. Environment variables are read at start. TLS can be set by pointing to a CA file.
+
+## DB field notes for reference views
+
+### `view_routes_live`, one chosen route per client, latest decision across optimized routes and reroutes
+
+| column                             | type                       | note                            |
+| ---------------------------------- | -------------------------- | ------------------------------- |
+| source                             | text                       | optimized, reroute              |
+| client\_id                         | text                       | id of the client                |
+| stop\_id                           | text nullable              | direct when null                |
+| origin\_lat, origin\_lon           | float                      | origin in WGS84                 |
+| destination\_lat, destination\_lon | float                      | destination in WGS84            |
+| path                               | geometry(LineString, 4326) | route geometry                  |
+| segment\_type                      | text                       | direct, multimodal, fallback    |
+| is\_chosen                         | boolean                    | chosen flag                     |
+| created\_at                        | timestamp                  | creation time                   |
+| reason                             | text nullable              | reason for a reroute when set   |
+| previous\_stop\_id                 | text nullable              | previous stop id                |
+| previous\_segment\_type            | text nullable              | previous type                   |
+| rn                                 | integer                    | window row number, helper field |
+
+**Map friendly select**
+
+```sql
+SELECT
+  client_id,
+  stop_id,
+  origin_lat, origin_lon,
+  destination_lat, destination_lon,
+  ST_AsGeoJSON(path)::json AS path_geojson,
+  segment_type,
+  created_at
+FROM view_routes_live;
+```
+
+### `view_routes_unified_latest`, latest record per client, stop id, segment type, and destination, unified across optimized routes and reroutes
+
+| column                             | type                       | note                            |
+| ---------------------------------- | -------------------------- | ------------------------------- |
+| source                             | text                       | optimized, reroute              |
+| client\_id                         | text                       | id of the client                |
+| stop\_id                           | text nullable              | direct when null                |
+| origin\_lat, origin\_lon           | float                      | origin in WGS84                 |
+| destination\_lat, destination\_lon | float                      | destination in WGS84            |
+| path                               | geometry(LineString, 4326) | route geometry                  |
+| segment\_type                      | text                       | direct, multimodal, fallback    |
+| is\_chosen                         | boolean                    | chosen flag                     |
+| created\_at                        | timestamp                  | creation time                   |
+| reason                             | text nullable              | reason for a reroute when set   |
+| previous\_stop\_id                 | text nullable              | previous stop id                |
+| previous\_segment\_type            | text nullable              | previous type                   |
+| rn                                 | integer                    | window row number, helper field |
+
+**Map friendly select**
+
+```sql
+SELECT
+  client_id,
+  stop_id,
+  origin_lat, origin_lon,
+  destination_lat, destination_lon,
+  ST_AsGeoJSON(path)::json AS path_geoJSON,
+  segment_type,
+  created_at
+FROM view_routes_unified_latest;
+```
+
+### `view_routes_unified`, latest per client and destination, unified across optimized routes and reroutes
+
+| column                             | type                       | note                         |
+| ---------------------------------- | -------------------------- | ---------------------------- |
+| client\_id                         | text                       | id of the client             |
+| stop\_id                           | text nullable              | direct when null             |
+| destination\_lat, destination\_lon | float                      | destination in WGS84         |
+| path                               | geometry(LineString, 4326) | route geometry               |
+| segment\_type                      | text                       | direct, multimodal, fallback |
+| created\_at                        | timestamp                  | creation time                |
+
+**Map friendly select**
+
+```sql
+SELECT
+  client_id,
+  stop_id,
+  destination_lat, destination_lon,
+  ST_AsGeoJSON(path)::json AS path_geojson,
+  segment_type,
+  created_at
+FROM view_routes_unified;
+```
+
+### Helpful companion view, latest live position per client
+
+`view_geodata_latest_point` returns one point per client with a `geom` Point in SRID 4326. This is useful for placing a live marker on a map.
+
+| column      | type                  | note                |
+| ----------- | --------------------- | ------------------- |
+| client\_id  | text                  | id of the client    |
+| session\_id | integer               | current session id  |
+| lat, lon    | float                 | WGS84               |
+| geom        | geometry(Point, 4326) | live point geometry |
+| speed       | float                 | optional            |
+| activity    | text                  | optional            |
+| timestamp   | timestamp             | source timestamp    |
+| updated\_at | timestamp             | ingest update time  |
+
+**Map friendly select**
+
+```sql
+SELECT
+  client_id,
+  ST_AsGeoJSON(geom)::json AS point_geojson,
+  speed,
+  activity,
+  timestamp
+FROM view_geodata_latest_point;
+```
+
+### Geometry and projection notes
+
+All route geometries are stored as `GEOMETRY(LineString, 4326)`. Coordinates are WGS84 in longitudinal and latitudinal order. GeoJSON produced by `ST_AsGeoJSON` uses `[lon, lat]`, which is what Leaflet and Mapbox expect. You can limit decimals with `ST_AsGeoJSON(path, 6)` to reduce payload size while keeping map quality.
+
+### Performance notes
+
+The views sit on top of append only tables with spatial and pragmatic indexes. This covers client lookup, destination filtering, and geometry operations. Useful indexes include geometry indexes on `path`, B tree indexes on `client_id`, and compound indexes on `client_id` with `created_at`. The schema favors appends and reads, cleanup and rollups can be done by background jobs.
 
 ## Security notes
 
 Use per device credentials on the broker.
 Scope publish permissions to `client/{client_id}/#`.
-Prefer TLS on 8883, pin a private CA when possible.
-If you expose `GET /api/view_routes_live`, add authentication, then derive `client_id` from the token so users do not pass IDs in URLs.
+Prefer TLS on 8883. Pin a private CA when possible.
+If you expose the UrbanOS API on the internet, add authentication and rate limiting. Derive client identity in your backend rather than trusting input.
 
 ## Repository layout
 
@@ -163,16 +300,15 @@ If you expose `GET /api/view_routes_live`, add authentication, then derive `clie
 
 ## Community TODO
 
-1. Android wrapper that starts the MQTT client and shows a “Get my route” button.
-2. Web map that calls the API and draws `path_geojson`.
-3. iOS mini client with Background Tasks for steady publishing.
-4. Broker examples with mTLS and per client ACLs.
-5. Postman collection and a small demo dataset.
+1. Android wrapper that starts the MQTT client and shows a button to fetch the latest route from the deployer backend.
+2. Web map that calls the deployer backend and draws `path_geojson`.
+3. iOS mini client with background tasks for steady publishing.
+4. Broker examples with mutual TLS and per client ACLs.
+5. Postman collection that targets the three reference endpoints and shows filtered examples.
 
 ## Disclaimer
 
-This software is provided “as is” and “as available”, without warranties of any kind, use it at your own risk, the authors are not liable for any claim or damage.
-UrbanOS is a sovereign, self healing AI software, it is designed to be modular and to run on anything from a Raspberry Pi to the cloud, data ownership remains with the deployer at all times.
+This repository provides client templates and reference outputs. It does not prescribe how to expose data. Deployers decide what to publish and how to filter. Use it at your own risk.
 
 ## Links
 
