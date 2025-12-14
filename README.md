@@ -6,7 +6,7 @@
 UrbanOS MQTT client templates in Go, JavaScript, and Python.
 Use these templates to publish geodata to UrbanOS, then let your own backend decide what to expose and how to filter.
 
-**UrbanOS PoC**, [https://github.com/pablo-chacon/UrbanOS-POC](https://github.com/pablo-chacon/UrbanOS-POC)
+[**UrbanOS PoC**](https://github.com/pablo-chacon/UrbanOS-POC)
 
 ## Why this exists
 
